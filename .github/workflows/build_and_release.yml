@@ -1,0 +1,95 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "master", "main" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 'Version Tag (e.g. v1.0.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Build
+      run: msbuild KKReshade.sln /p:Configuration=Release /p:Platform=x64
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: KKReshade.addon
+        path: output/x64/Release/KKReshade.addon
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version_tag != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Download Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: KKReshade.addon
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.version_tag || '' }}
+        files: KKReshade.addon
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  nightly:
+    needs: build
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version_tag != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Download Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: KKReshade.addon
+  
+    - name: Delete older nightly release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release delete nightly --cleanup-tag --yes --repo ${{ github.repository }} || echo "Nightly release not found"
+
+    - name: Update Nightly Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: nightly
+        name: Nightly Build
+        body: |
+          Nightly build of KKReshade
+          Commit: ${{ github.sha }}
+        generate_release_notes: true
+        files: KKReshade.addon
+        draft: false
+        prerelease: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
